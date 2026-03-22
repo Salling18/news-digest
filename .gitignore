@@ -1,0 +1,25 @@
+# Database
+digest.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# sentence-transformers model cache
+.cache/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+.claude/
