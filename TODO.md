@@ -7,14 +7,14 @@
 - [x] ETag / Last-Modified conditional fetching (polite to servers)
 - [x] CLI: `--add-source <url>`, `--name`, `--db`
 
-## ⬜ Layer 2: Embedding + Clustering (`embedder.py`)
-- [ ] Load unembedded articles from DB
-- [ ] Generate embeddings with sentence-transformers (`all-MiniLM-L6-v2`)
-- [ ] Serialize + store embeddings in `articles.embedding` (BLOB)
-- [ ] Run HDBSCAN clustering over all embeddings (cosine distance)
-- [ ] Assign `cluster_id` to each article
-- [ ] Pick canonical article per cluster (highest source credibility)
-- [ ] Insert/update rows in `clusters` table
+## ✅ Layer 2: Embedding + Clustering (`embedder.py`)
+- [x] Load unembedded articles from DB
+- [x] Generate embeddings with sentence-transformers (`all-MiniLM-L6-v2`)
+- [x] Serialize + store embeddings in `articles.embedding` (BLOB)
+- [x] Run HDBSCAN clustering over all embeddings (cosine distance)
+- [x] Assign `cluster_id` to each article
+- [x] Pick canonical article per cluster (highest source credibility)
+- [x] Insert/update rows in `clusters` table
 
 ## ⬜ Layer 3: Relevance Ranking (`ranker.py`)
 - [ ] Load/embed `interest_profile` entries
