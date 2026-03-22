@@ -1,36 +1,34 @@
-# RSS Digest — Project TODO
+# RSS Digest — TODO
 
-## ✅ Layer 1: Ingestion (`ingester.py`)
-- [x] Fetch RSS/Atom feeds via feedparser
-- [x] SQLite schema (sources, articles)
-- [x] Content-hash deduplication (exact duplicates)
-- [x] ETag / Last-Modified conditional fetching (polite to servers)
-- [x] CLI: `--add-source <url>`, `--name`, `--db`
+## ✅ Go rewrite
 
-## ✅ Layer 2: Embedding + Clustering (`embedder.py`)
-- [x] Load unembedded articles from DB
-- [x] Generate embeddings with sentence-transformers (`all-MiniLM-L6-v2`)
-- [x] Serialize + store embeddings in `articles.embedding` (BLOB)
-- [x] Run HDBSCAN clustering over all embeddings (cosine distance)
-- [x] Assign `cluster_id` to each article
-- [x] Pick canonical article per cluster (highest source credibility)
-- [x] Insert/update rows in `clusters` table
+- [x] `internal/db` — SQLite open + schema DDL
+- [x] `internal/embedclient` — HTTP client for Python embed service
+- [x] `internal/pipeline` — ingest, embed, rank
+- [x] `internal/server` — chi router, RSS handler, cron scheduler
+- [x] `cmd/digest` — CLI subcommands: ingest, embed, rank, serve
+- [x] `embed_service/embed_service.py` — stateless FastAPI microservice
 
-## ⬜ Layer 3: Relevance Ranking (`ranker.py`)
-- [ ] Load/embed `interest_profile` entries
-- [ ] Score each cluster against profile (cosine similarity)
-- [ ] Write `relevance` score back to `articles`
-- [ ] Apply threshold filter (discard low-relevance clusters)
-- [ ] Populate `feed_items` table with ranked output
+## ✅ Pipeline features
 
-## ⬜ Layer 4: RSS Output (`server.py`)
-- [ ] FastAPI app with lifespan + APScheduler (hourly ingestion trigger)
-- [ ] `GET /feed.xml` — generate RSS 2.0 via feedgen from `feed_items`
-- [ ] `GET /health` — status + item count
-- [ ] Serve on configurable port (default 8000)
-- [ ] Optional: `POST /sources` to add feeds via HTTP
+- [x] ETag/Last-Modified conditional fetching
+- [x] Two-pass deduplication (URL + content hash)
+- [x] Sentence embeddings via Python service (all-MiniLM-L6-v2, 384-dim)
+- [x] HDBSCAN clustering with canonical article selection
+- [x] Cosine relevance scoring against interest profiles
+- [x] feed_items materialisation + RSS output
+- [x] Hourly cron scheduler in `serve` subcommand
+- [x] `/health` endpoint with DB stats
 
-## Backlog (future layers)
+## ⬜ Testing
+
+- [ ] Add a source and run `digest ingest`
+- [ ] Start embed service and run `digest embed`
+- [ ] Add an interest profile and run `digest rank`
+- [ ] Start `digest serve` and verify `/feed.xml`
+
+## Backlog
+
 - [ ] Feedback loop: mark articles interesting/not, update interest profile weights
 - [ ] LLM-generated cluster summaries in RSS description field
 - [ ] Source credibility scoring based on click-through history
