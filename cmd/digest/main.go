@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/salling18/news-digest/internal/db"
-	"github.com/salling18/news-digest/internal/embedclient"
-	"github.com/salling18/news-digest/internal/pipeline"
-	"github.com/salling18/news-digest/internal/server"
+	"news-digest/internal/db"
+	"news-digest/internal/embedclient"
+	"news-digest/internal/pipeline"
+	"news-digest/internal/server"
 )
 
 func main() {

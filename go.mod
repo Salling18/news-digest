@@ -1,4 +1,4 @@
-module github.com/salling18/news-digest
+module news-digest
 
 go 1.25.8
 

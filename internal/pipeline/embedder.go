@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/salling18/news-digest/internal/embedclient"
+	"news-digest/internal/embedclient"
 )
 
 // Embed embeds pending articles and re-clusters all embeddings.

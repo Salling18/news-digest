@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/robfig/cron/v3"
 
-	"github.com/salling18/news-digest/internal/embedclient"
-	"github.com/salling18/news-digest/internal/pipeline"
+	"news-digest/internal/embedclient"
+	"news-digest/internal/pipeline"
 )
 
 // Config holds the parameters needed to start the server.

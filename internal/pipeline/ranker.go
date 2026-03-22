@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/salling18/news-digest/internal/embedclient"
+	"news-digest/internal/embedclient"
 )
 
 const DefaultThreshold = 0.3
