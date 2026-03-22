@@ -12,6 +12,7 @@ Usage:
   python embedder.py
   python embedder.py --db path/to/digest.db
   python embedder.py --model all-mpnet-base-v2 --min-cluster-size 5
+  python embedder.py --max-age-days 30    # only cluster recent articles
 """
 
 import argparse
@@ -24,48 +25,17 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import HDBSCAN
 
+import db
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-DB_PATH = Path("digest.db")
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBED_BATCH_SIZE = 64
 MIN_CLUSTER_SIZE = 3
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Database setup
-# ---------------------------------------------------------------------------
-
-def get_db(path: Path = DB_PATH) -> sqlite3.Connection:
-    """Open (or create) the SQLite database with WAL mode and FK enforcement."""
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def init_db(conn: sqlite3.Connection) -> None:
-    """Create the clusters table if it doesn't exist yet."""
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS clusters (
-            id              INTEGER PRIMARY KEY,
-            canonical_id    INTEGER REFERENCES articles(id),
-            first_seen_at   TEXT DEFAULT (datetime('now')),
-            last_updated_at TEXT DEFAULT (datetime('now')),
-            article_count   INTEGER DEFAULT 0,
-            summary         TEXT        -- reserved for LLM-generated summaries (Layer 4+)
-        );
-    """)
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -107,8 +77,10 @@ def embed_pending(conn: sqlite3.Connection, model: SentenceTransformer) -> int:
     log.info("Embedding %d new articles ...", len(rows))
 
     ids = [r["id"] for r in rows]
+    # ~1500 chars ≈ 350-400 tokens, which fills the model's 256-token window
+    # after subword splitting. Better signal than the previous 512-char cutoff.
     texts = [
-        f"{r['title']} {(r['body'] or '')[:512]}"
+        f"{r['title']} {(r['body'] or '')[:1500]}"
         for r in rows
     ]
 
@@ -134,17 +106,31 @@ def embed_pending(conn: sqlite3.Connection, model: SentenceTransformer) -> int:
 # Clustering
 # ---------------------------------------------------------------------------
 
-def load_all_embeddings(conn: sqlite3.Connection) -> tuple[list[int], np.ndarray]:
+def load_all_embeddings(
+    conn: sqlite3.Connection,
+    max_age_days: int | None = None,
+) -> tuple[list[int], np.ndarray]:
     """
-    Load every embedded article from the database.
+    Load embedded articles from the database.
+
+    If max_age_days is set, only articles fetched within that window are
+    included — this bounds the HDBSCAN matrix size as the corpus grows.
 
     Returns a tuple of:
       - article_ids: list of article IDs in row order
       - matrix: float32 ndarray of shape (N, embedding_dim)
     """
-    rows = conn.execute(
-        "SELECT id, embedding FROM articles WHERE embedding IS NOT NULL"
-    ).fetchall()
+    if max_age_days is not None:
+        rows = conn.execute(
+            """SELECT id, embedding FROM articles
+               WHERE embedding IS NOT NULL
+                 AND fetched_at >= datetime('now', ?)""",
+            (f"-{max_age_days} days",),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, embedding FROM articles WHERE embedding IS NOT NULL"
+        ).fetchall()
 
     if not rows:
         return [], np.empty((0, 0), dtype=np.float32)
@@ -303,19 +289,20 @@ def run_embedding(
     conn: sqlite3.Connection,
     model: SentenceTransformer,
     min_cluster_size: int,
+    max_age_days: int | None = None,
 ) -> None:
     """
     Full Layer 2 pipeline: embed new articles, then re-cluster everything.
 
     Steps:
       1. Embed any articles missing an embedding vector
-      2. Load all embeddings into memory
+      2. Load all embeddings into memory (optionally bounded by age)
       3. Run HDBSCAN clustering
       4. Persist cluster assignments and update the clusters table
     """
     embed_pending(conn, model)
 
-    article_ids, matrix = load_all_embeddings(conn)
+    article_ids, matrix = load_all_embeddings(conn, max_age_days)
     if len(article_ids) < min_cluster_size:
         log.warning(
             "Only %d embedded articles — need at least %d for clustering. Skipping.",
@@ -336,8 +323,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="RSS Digest — embedding and clustering layer")
     parser.add_argument(
         "--db",
-        default=str(DB_PATH),
-        help=f"Path to SQLite database (default: {DB_PATH})",
+        default=str(db.DB_PATH),
+        help=f"Path to SQLite database (default: {db.DB_PATH})",
     )
     parser.add_argument(
         "--model",
@@ -350,12 +337,19 @@ def main() -> None:
         default=MIN_CLUSTER_SIZE,
         help=f"HDBSCAN min_cluster_size (default: {MIN_CLUSTER_SIZE})",
     )
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=None,
+        help="Only cluster articles fetched within this many days (default: all)",
+    )
     args = parser.parse_args()
 
-    conn = get_db(Path(args.db))
-    init_db(conn)
+    db.setup_logging()
+    conn = db.get_db(Path(args.db))
+    db.init_db(conn)
     model = load_model(args.model)
-    run_embedding(conn, model, args.min_cluster_size)
+    run_embedding(conn, model, args.min_cluster_size, args.max_age_days)
 
 
 if __name__ == "__main__":

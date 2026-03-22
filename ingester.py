@@ -21,73 +21,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import db
 import feed_adapter
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-DB_PATH = Path("digest.db")
 REQUEST_DELAY_SEC = 1.0
 USER_AGENT = "RSSDigest/0.1 (self-hosted; +https://github.com/you/rss-digest)"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
 log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Database setup
-# ---------------------------------------------------------------------------
-
-def get_db(path: Path = DB_PATH) -> sqlite3.Connection:
-    """Open the SQLite database, enabling WAL mode for safe concurrent reads and writes."""
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS sources (
-            id              INTEGER PRIMARY KEY,
-            url             TEXT UNIQUE NOT NULL,
-            name            TEXT,
-            home_url        TEXT,
-            credibility     REAL DEFAULT 0.5,
-            active          INTEGER DEFAULT 1,
-            etag            TEXT,
-            last_modified   TEXT,
-            last_fetched_at TEXT,
-            created_at      TEXT DEFAULT (datetime('now'))
-        );
-
-        CREATE TABLE IF NOT EXISTS articles (
-            id            INTEGER PRIMARY KEY,
-            source_id     INTEGER NOT NULL REFERENCES sources(id),
-            url           TEXT UNIQUE NOT NULL,
-            title         TEXT,
-            body          TEXT,
-            published_at  TEXT,
-            fetched_at    TEXT DEFAULT (datetime('now')),
-            content_hash  TEXT NOT NULL,
-            embedding     BLOB,           -- filled by embedder.py (Layer 2)
-            cluster_id    INTEGER,        -- filled by embedder.py (Layer 2)
-            relevance     REAL            -- filled by ranker.py   (Layer 3)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_articles_source
-            ON articles(source_id);
-        CREATE INDEX IF NOT EXISTS idx_articles_published
-            ON articles(published_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_articles_cluster
-            ON articles(cluster_id);
-    """)
-    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -125,11 +69,14 @@ def parse_published(entry: feed_adapter.FeedEntry) -> str | None:
     return None
 
 
-def fetch_feed(source: sqlite3.Row) -> list[RawArticle]:
-    """Fetch one feed and return its parsed articles.
+def fetch_feed(source: sqlite3.Row) -> tuple[list[RawArticle], feed_adapter.FeedResult]:
+    """Fetch one feed and return its parsed articles alongside the raw FeedResult.
 
     Passes cached ETag and Last-Modified headers so the server can respond
     with 304 Not Modified and skip retransmitting unchanged content.
+
+    Returns the FeedResult so callers can update source metadata (etag,
+    last_modified) without re-fetching.
     """
     url = source["url"]
     source_id = source["id"]
@@ -145,11 +92,11 @@ def fetch_feed(source: sqlite3.Row) -> list[RawArticle]:
 
     if feed.status == 304:
         log.info("  → Not modified (304), skipping")
-        return []
+        return [], feed
 
     if feed.bozo and not feed.entries:
         log.warning("  → Parse error for %s: %s", url, feed.bozo_exception)
-        return []
+        return [], feed
 
     log.info("  → %d entries", len(feed.entries))
 
@@ -170,7 +117,7 @@ def fetch_feed(source: sqlite3.Row) -> list[RawArticle]:
             content_hash=hash_,
         ))
 
-    return articles
+    return articles, feed
 
 
 def upsert_source_meta(conn: sqlite3.Connection, source_id: int, feed: feed_adapter.FeedResult) -> None:
@@ -240,14 +187,16 @@ def run_ingestion(conn: sqlite3.Connection) -> None:
 
     total_new = 0
     for i, source in enumerate(sources):
-        articles = fetch_feed(source)
-        if articles:
-            n = insert_articles(conn, articles)
-            total_new += n
-            log.info("  → Stored %d new articles from %s", n, source["name"] or source["url"])
+        try:
+            articles, feed = fetch_feed(source)
+            if articles:
+                n = insert_articles(conn, articles)
+                total_new += n
+                log.info("  → Stored %d new articles from %s", n, source["name"] or source["url"])
 
-        feed = feed_adapter.parse(source["url"], agent=USER_AGENT)
-        upsert_source_meta(conn, source["id"], feed)
+            upsert_source_meta(conn, source["id"], feed)
+        except Exception:
+            log.exception("  → Failed to fetch %s, skipping", source["name"] or source["url"])
 
         if i < len(sources) - 1:
             time.sleep(REQUEST_DELAY_SEC)
@@ -293,13 +242,14 @@ def main():
     )
     parser.add_argument(
         "--db",
-        default=str(DB_PATH),
-        help=f"Path to SQLite database (default: {DB_PATH})",
+        default=str(db.DB_PATH),
+        help=f"Path to SQLite database (default: {db.DB_PATH})",
     )
     args = parser.parse_args()
 
-    conn = get_db(Path(args.db))
-    init_db(conn)
+    db.setup_logging()
+    conn = db.get_db(Path(args.db))
+    db.init_db(conn)
 
     if args.add_source:
         add_source(conn, args.add_source, args.name)
